@@ -1,3 +1,4 @@
+import json
 import math
 from pathlib import Path
 
@@ -281,3 +282,157 @@ def results_viz(network_data, results):
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"\n✓ Circuit heatmap plot saved as '{output_path}'")
     plt.show()
+
+def line_loading_process(line_name, phase):
+    """Plot time series loading values for a specific line and phase.
+    
+    Args:
+        line_name: Name of the line (e.g., 'temp_sub', 'oh_b13552')
+        phase: Phase number (1, 2, or 3)
+    """
+    # Load line aging data
+    output_dir = Path(__file__).resolve().parent / "output"
+    line_aging_path = output_dir / "line_aging_data.json"
+    
+    if not line_aging_path.exists():
+        print(f"Error: Line aging data file not found at {line_aging_path}")
+        return
+    
+    with open(line_aging_path, 'r') as f:
+        line_aging_data = json.load(f)
+    
+    # Extract loading percentages for the given line and phase
+    scenarios = []
+    loading_values = []
+    
+    for scenario_num in sorted(line_aging_data.keys(), key=int):
+        scenario_data = line_aging_data[scenario_num]
+        
+        # Check if the line exists in this scenario
+        if line_name in scenario_data:
+            line_data = scenario_data[line_name]
+            
+            # Check if the phase exists for this line
+            if str(phase) in line_data:
+                loading_pct = line_data[str(phase)]['loading_percentage']
+                scenarios.append(int(scenario_num))
+                loading_values.append(loading_pct)
+    
+    # Check if data was found
+    if not loading_values:
+        print(f"Error: No data found for line '{line_name}' phase {phase}")
+        print(f"Available lines in scenario 0: {list(line_aging_data['0'].keys())}")
+        return
+    
+    # Create the plot
+    plt.figure(figsize=(3.5, 2))
+    plt.plot(scenarios, loading_values, marker='o', linewidth=2, markersize=8)
+    plt.xlabel('Scenario Number', fontsize=8, fontweight='bold')
+    plt.ylabel('Line Loading (%)', fontsize=8, fontweight='bold')
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    # Save the plot
+    output_path = output_dir / f'line_loading_{line_name}_phase{phase}.png'
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.show()
+
+
+def conductor_temperature_evolution(line_name, phase, T_rated=75, T_ambient=30, tau=3, delta_t=1):
+    """Calculate and plot conductor temperature evolution based on loading.
+    
+    Uses thermal model:
+        T_ss(t) = T_a + (T_rated - T_a) * (L_t/100)^2
+        T_t = T_{t-1} + (Δt/τ) * (T_ss(t) - T_{t-1})
+    
+    Args:
+        line_name: Name of the line (e.g., 'temp_sub', 'oh_b13552')
+        phase: Phase number (1, 2, or 3)
+        T_rated: Rated conductor temperature in Celsius (default: 60°C)
+        T_ambient: Ambient temperature in Celsius (default: 30°C)
+        tau: Thermal time constant in hours (default: 1 hour)
+        delta_t: Time step in hours (default: 1 hour)
+    """
+    # Load line aging data
+    output_dir = Path(__file__).resolve().parent / "output"
+    line_aging_path = output_dir / "line_aging_data.json"
+    
+    if not line_aging_path.exists():
+        print(f"Error: Line aging data file not found at {line_aging_path}")
+        return
+    
+    with open(line_aging_path, 'r') as f:
+        line_aging_data = json.load(f)
+    
+    # Extract loading percentages for the given line and phase
+    scenarios = []
+    loading_values = []
+    
+    for scenario_num in sorted(line_aging_data.keys(), key=int):
+        scenario_data = line_aging_data[scenario_num]
+        
+        # Check if the line exists in this scenario
+        if line_name in scenario_data:
+            line_data = scenario_data[line_name]
+            
+            # Check if the phase exists for this line
+            if str(phase) in line_data:
+                loading_pct = line_data[str(phase)]['loading_percentage']
+                scenarios.append(int(scenario_num))
+                loading_values.append(loading_pct)
+    
+    # Check if data was found
+    if not loading_values:
+        print(f"Error: No data found for line '{line_name}' phase {phase}")
+        print(f"Available lines in scenario 0: {list(line_aging_data['0'].keys())}")
+        return
+    
+    # Calculate temperature evolution
+    temperatures = []
+    T_current = T_ambient  # Start at ambient temperature
+    
+    for L_t in loading_values:
+        # Calculate steady-state temperature
+        T_ss = T_ambient + (T_rated - T_ambient) * (L_t / 100) ** 2
+        
+        # Calculate transient temperature using thermal time constant
+        T_current = T_current + (delta_t / tau) * (T_ss - T_current)
+        temperatures.append(T_current)
+    
+    # Create the plot
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.5, 4))
+    
+    # Plot loading
+    ax1.plot(scenarios, loading_values, marker='o', linewidth=1.5, markersize=4, color='blue')
+    ax1.set_xlabel('Time (hours)', fontsize=8, fontweight='bold')
+    ax1.set_ylabel('Loading (%)', fontsize=8, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+    ax1.tick_params(labelsize=7)
+    
+    # Plot temperature
+    ax2.plot(scenarios, temperatures, marker='s', linewidth=1.5, markersize=4, color='red')
+    ax2.axhline(y=T_rated, color='orange', linestyle='--', linewidth=1, label=f'Rated: {T_rated}°C')
+    ax2.axhline(y=T_ambient, color='green', linestyle='--', linewidth=1, label=f'Ambient: {T_ambient}°C')
+    ax2.set_xlabel('Time (hours)', fontsize=8, fontweight='bold')
+    ax2.set_ylabel('Temperature (°C)', fontsize=8, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(fontsize=6, loc='best')
+    ax2.tick_params(labelsize=7)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    output_path = output_dir / f'temperature_evolution_{line_name}_phase{phase}.png'
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.show()
+
+
+if __name__ == "__main__":
+    # Post process line loading - specify line name and phase
+    # Example: line_loading_process('temp_sub', 1)
+    # Example: line_loading_process('oh_b18916', 2)
+    # line_loading_process('oh_b18948', 2)
+    
+    # Calculate and plot conductor temperature evolution
+    # conductor_temperature_evolution('oh_b18948', 2, T_rated=75, T_ambient=30, tau=3, delta_t=1)
+    conductor_temperature_evolution('oh_b18930', 3, T_rated=75, T_ambient=30, tau=3, delta_t=1)

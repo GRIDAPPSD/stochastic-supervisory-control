@@ -15,7 +15,7 @@ Redirect Capacitors.dss
 Redirect Regulators.dss
 Redirect ExistingPV.dss
 
-New Load.b18925 Bus1=b18949 Phases=3 kW=1500 kVAr=500
+New Load.b18925 Bus1=b18949 Phases=3 kW=2500 kVAr=1200
 
 set maxiter=100
 set maxcontroliter=100

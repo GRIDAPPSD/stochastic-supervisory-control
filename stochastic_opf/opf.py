@@ -24,11 +24,13 @@ class OptimalPowerFlow:
         self.capacitors = network_data.get('capacitors', [])
         self.source_bus = network_data['source_bus']
         self.power_base = 1 / 3 # Base power in MVA per phase
-        # convert line ratings from MVA to pu and save it as dictionary
+        
+        # Convert line ratings to per-unit WITHOUT modifying the original data
         self.line_ampacity = {}
         for line in self.lines:
-            line['rating'] = line['rating'] / self.power_base
-            self.line_ampacity[line['name']] = line['rating']
+            rating_pu = line['rating'] / self.power_base
+            self.line_ampacity[line['name']] = rating_pu
+        
         # Pyomo model
         self.model = None
         
@@ -652,7 +654,7 @@ class OptimalPowerFlow:
         m.LineLimitConstraint1 = pyo.Constraint(m.LinePhaseSet, rule=line_limit_rule_1)
         m.LineLimitConstraint2 = pyo.Constraint(m.LinePhaseSet, rule=line_limit_rule_2)
     
-    def formulate_opf(self, penalty_weight=1, vsrc=1.0):
+    def formulate_opf(self, penalty_weight=1000, vsrc=1.0):
         """
         Formulate the complete OPF problem.
         
@@ -671,7 +673,7 @@ class OptimalPowerFlow:
         self.add_voltage_drop_constraints()
         self.add_voltage_limits()
         self.add_line_limit_constraints()
-        self.add_voltvar_constraints()
+        # self.add_voltvar_constraints()
         
         # Objective: Minimize line limit violations
         # Sum of all line violation slack variables weighted by penalty
@@ -714,7 +716,7 @@ class OptimalPowerFlow:
 
         # m.obj = pyo.Objective(expr=penalty_weight * violation_penalty, sense=pyo.minimize)
         
-    def solve(self, solver='mosek', verbose=True):
+    def solve(self, scenario_idx,solver='mosek', verbose=True):
         """
         Solve the OPF problem.
         
@@ -729,12 +731,12 @@ class OptimalPowerFlow:
         opt = SolverFactory(solver)
 
         # opt.options['mio_tol_rel_gap'] = 0.01
-        opt.options['dparam.mio_tol_rel_gap'] = 0.01
+        opt.options['dparam.mio_tol_rel_gap'] = 0.005
 
         # Write optimization problem to a file in output directory
         output_dir = Path(__file__).resolve().parent / "output"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / "optimization_problem.txt"
+        output_path = output_dir / f"optimization_problem_{scenario_idx}.txt"
         with open(output_path, "w") as f:
             f.write("Pyomo Model:\n")
             self.model.pprint(ostream=f)
@@ -745,6 +747,7 @@ class OptimalPowerFlow:
         else:
             opt_results = opt.solve(self.model)
         
+        print('Objective value (penalty):', pyo.value(self.model.obj))
         # Extract results
         results = {
             'status': str(opt_results.solver.status),
@@ -758,6 +761,8 @@ class OptimalPowerFlow:
             'line_violations': {},
             'der_q': {}
         } 
+
+        line_loading = {}
         
         # Extract voltage results
         if opt_results.solver.termination_condition == pyo.TerminationCondition.optimal:
@@ -814,6 +819,11 @@ class OptimalPowerFlow:
             for line_name, phase in self.model.LinePhaseSet:
                 seg_values = []
                 line_total = 0
+                flow_P = pyo.value(self.model.P_line[line_name, phase]) * 1000 * self.power_base
+                flow_Q = pyo.value(self.model.Q_line[line_name, phase]) * 1000 * self.power_base
+                K = math.sqrt(2) - 1
+                flow_S = max((abs(flow_P) + K* abs(flow_Q) ) / 1000.0, (abs(flow_Q) + K* abs(flow_P)) / 1000.0)
+                loading_percentage = flow_S / self.line_ampacity[line_name] * 100
                 for seg in self.model.ViolSegSet:
                     val = pyo.value(self.model.line_viol_seg[line_name, phase, seg])
                     seg_values.append(val)
@@ -823,21 +833,25 @@ class OptimalPowerFlow:
                     if line_name not in results['line_violations']:
                         results['line_violations'][line_name] = {}
                     
-                    rating = self.line_ampacity[line_name]
+                    rating = self.line_ampacity[line_name] * self.power_base
                     # overload_pct = (rating + line_total) / rating * 100 if rating > 0 else 0
-                    overload_pct = (1 + line_total)* 100
-                    
+                    loading_percentage = (1 + line_total)* 100
+
                     results['line_violations'][line_name][phase] = {
                         'total': line_total,
-                        'overload_percent': overload_pct,
+                        'overload_percent': loading_percentage,
                         'tier_0_minor': seg_values[0],
                         'tier_1_moderate': seg_values[1],
                         'tier_2_severe': seg_values[2],
                         'tier_3_critical': seg_values[3],
                     }
                     total_violations += line_total
-                    print(f"Line {line_name} phase {phase}: "
-                        f"{overload_pct:.3f}% loaded")
+                    # print(f"Line {line_name} phase {phase}: "
+                    #     f"{loading_percentage:.3f}% loaded")
+                
+                if line_name not in line_loading:
+                    line_loading[line_name] = {}
+                line_loading[line_name][phase] = {'loading_percentage': loading_percentage}
             
             # extract DER power outputs (convert pu to kVAr)
             for der_bus, phase in self.model.DerBusPhaseSet:
@@ -849,18 +863,18 @@ class OptimalPowerFlow:
             
             # save results to a JSON file inside the output directory
             # Output directory is already created
-            output_file = output_dir / "opf_results.json"
+            output_file = output_dir / f"opf_results_{scenario_idx}.json"
             with open(output_file, 'w') as f:
                 json.dump(results, f, indent=4)
             
             # Print summary of violations
-            if total_violations > 1e-6:
-                print(f"\nTotal line violations penalty: {results['optimal_value'] :.6f}")
-                print(f"Number of violated lines: {sum(len(v) for v in results['line_violations'].values())}")
-            else:
-                print(f"\nNo line limit violations detected")
+            # if total_violations > 1e-6:
+            #     print(f"\nTotal line violations penalty: {results['optimal_value'] :.6f}")
+            #     print(f"Number of violated lines: {sum(len(v) for v in results['line_violations'].values())}")
+            # else:
+            #     print(f"\nNo line limit violations detected")
         else:
             print(f"\nOptimization did not converge to an optimal solution. Termination condition: {opt_results.solver.termination_condition}")
-            exit()
+            # exit()
 
-        return results
+        return results, line_loading

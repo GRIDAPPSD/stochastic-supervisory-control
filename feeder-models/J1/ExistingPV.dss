@@ -1,6 +1,6 @@
 ! Large, 3-Phase PV Systems
-New PVSystem.3P_ExistingSite1 phases=3 bus1=b18966   kV=12.47 kVA=614 irradiance=1 Pmpp=285 pf=1 %cutin=0.1 %cutout=0.1 	!yearly=PV_13_15
-New PVSystem.3P_ExistingSite2 phases=1 bus1=b41876.1  kV=7.2 kVA=200 irradiance=1 Pmpp=275 pf=1 %cutin=0.1 %cutout=0.1 	!yearly=PV_13_15
+!New PVSystem.3P_ExistingSite1 phases=3 bus1=b18966   kV=12.47 kVA=614 irradiance=1 Pmpp=285 pf=1 %cutin=0.1 %cutout=0.1 	!yearly=PV_13_15
+!New PVSystem.3P_ExistingSite2 phases=1 bus1=b41876.1  kV=7.2 kVA=200 irradiance=1 Pmpp=275 pf=1 %cutin=0.1 %cutout=0.1 	!yearly=PV_13_15
 
 !New PVSystem.3P_ExistingSite2 phases=3 bus1=B4832_sec      kV=0.416 kVA=209 irradiance=1 Pmpp=190 pf=1 %cutin=0.1 %cutout=0.1 	!yearly=PV_13_16
 !New PVSystem.3P_ExistingSite3 phases=3 bus1=5890628219_sec kV=0.416 kVA=836 irradiance=1 Pmpp=760 pf=1 %cutin=0.1 %cutout=0.1 	!yearly=PV_15_14

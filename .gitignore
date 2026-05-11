@@ -37,3 +37,8 @@ htmlcov/
 .DS_Store
 Thumbs.db
 *:Zone.Identifier
+
+# Data and output files
+*.txt
+*.json
+*.png
