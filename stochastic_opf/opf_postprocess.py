@@ -338,20 +338,70 @@ def line_loading_process(line_name, phase):
     plt.show()
 
 
-def conductor_temperature_evolution(line_name, phase, T_rated=75, T_ambient=30, tau=3, delta_t=1):
-    """Calculate and plot conductor temperature evolution based on loading.
-    
-    Uses thermal model:
-        T_ss(t) = T_a + (T_rated - T_a) * (L_t/100)^2
-        T_t = T_{t-1} + (Δt/τ) * (T_ss(t) - T_{t-1})
-    
+def steady_state_temperature(
+    I,                      # Current (A)
+    Ta_C,                   # Ambient temperature (°C)  <-- YES this matters
+    D0_m      = 0.02814,    # Conductor diameter (m)        [Drake ACSR default]
+    R_low     = 7.283e-5,   # Resistance at 25°C (Ω/m)     [Drake ACSR default]
+    R_high    = 8.688e-5,   # Resistance at 75°C (Ω/m)     [Drake ACSR default]
+    Vw_ms     = 0.61,       # Wind speed (m/s)
+    phi_deg   = 90.0,       # Wind angle to conductor (°)
+    qs        = 26.8,       # Solar heat gain (W/m)
+    emissivity= 0.5,        # Surface emissivity
+):
+    """Returns steady-state conductor temperature (°C) for the given current and ambient."""
+ 
+    def R(T):
+        return R_low + (R_high - R_low) * (T - 25) / (75 - 25)
+ 
+    def qc(T):
+        Tf  = (T + Ta_C) / 2
+        rho = (1.293 * 273.15 / (273.15 + Tf)) * math.exp(0)
+        mu  = (1.458e-6 * (Tf + 273.15)**1.5) / (Tf + 273.15 + 110.4)
+        kf  = 2.42e-2 + 7.2e-5 * Tf
+        NRe = D0_m * Vw_ms * rho / mu
+        phi = math.radians(phi_deg)
+        Ka  = 1.194 - math.cos(phi) + 0.194*math.cos(2*phi) + 0.368*math.sin(2*phi)
+        dT  = T - Ta_C
+        return max(
+            Ka * (1.01 + 1.35 * NRe**0.52) * kf * dT,
+            Ka * 0.754 * NRe**0.6           * kf * dT,
+            3.645 * rho**0.5 * D0_m**0.75  * dT**1.25,
+        )
+ 
+    def qr(T):
+        return 17.8 * D0_m * emissivity * ((T + 273.15)**4 - (Ta_C + 273.15)**4) / 1e8
+ 
+    # Bisection: find T where heat_balance_current(T) == I
+    lo, hi = Ta_C, Ta_C + 250.0
+    for _ in range(100):
+        T   = (lo + hi) / 2
+        net = qc(T) + qr(T) - qs
+        I_calc = math.sqrt(max(net, 0) / R(T))
+        if I_calc > I:
+            hi = T
+        else:
+            lo = T
+        if hi - lo < 0.001:
+            break
+ 
+    return round((lo + hi) / 2, 2)
+
+
+def conductor_temperature_evolution(line_name, phase, T_ambient=30):
+    """Calculate and plot conductor temperature and line loading evolution across scenarios.
+
+    Reads per-scenario loading percentages from the line aging data JSON, computes
+    the steady-state conductor temperature for each scenario using
+    ``steady_state_temperature``, and produces a two-subplot figure showing
+    (1) conductor temperature (°C) and (2) line loading (%) vs. scenario number.
+    The figure is saved to the output directory as a PNG file.
+
     Args:
-        line_name: Name of the line (e.g., 'temp_sub', 'oh_b13552')
-        phase: Phase number (1, 2, or 3)
-        T_rated: Rated conductor temperature in Celsius (default: 60°C)
-        T_ambient: Ambient temperature in Celsius (default: 30°C)
-        tau: Thermal time constant in hours (default: 1 hour)
-        delta_t: Time step in hours (default: 1 hour)
+        line_name (str): Name of the line to analyse (e.g. ``'oh_b18930'``).
+        phase (int): Phase number (1, 2, or 3).
+        T_ambient (float): Ambient temperature in °C used for the thermal model.
+            Defaults to 30.
     """
     # Load line aging data
     output_dir = Path(__file__).resolve().parent / "output"
@@ -386,44 +436,35 @@ def conductor_temperature_evolution(line_name, phase, T_rated=75, T_ambient=30, 
         print(f"Error: No data found for line '{line_name}' phase {phase}")
         print(f"Available lines in scenario 0: {list(line_aging_data['0'].keys())}")
         return
-    
+
     # Calculate temperature evolution
     temperatures = []
-    T_current = T_ambient  # Start at ambient temperature
-    
     for L_t in loading_values:
-        # Calculate steady-state temperature
-        T_ss = T_ambient + (T_rated - T_ambient) * (L_t / 100) ** 2
-        
-        # Calculate transient temperature using thermal time constant
-        T_current = T_current + (delta_t / tau) * (T_ss - T_current)
-        temperatures.append(T_current)
-    
-    # Create the plot
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.5, 4))
-    
-    # Plot loading
-    ax1.plot(scenarios, loading_values, marker='o', linewidth=1.5, markersize=4, color='blue')
-    ax1.set_xlabel('Time (hours)', fontsize=8, fontweight='bold')
-    ax1.set_ylabel('Loading (%)', fontsize=8, fontweight='bold')
-    ax1.grid(True, alpha=0.3)
-    ax1.tick_params(labelsize=7)
-    
-    # Plot temperature
-    ax2.plot(scenarios, temperatures, marker='s', linewidth=1.5, markersize=4, color='red')
-    ax2.axhline(y=T_rated, color='orange', linestyle='--', linewidth=1, label=f'Rated: {T_rated}°C')
-    ax2.axhline(y=T_ambient, color='green', linestyle='--', linewidth=1, label=f'Ambient: {T_ambient}°C')
-    ax2.set_xlabel('Time (hours)', fontsize=8, fontweight='bold')
-    ax2.set_ylabel('Temperature (°C)', fontsize=8, fontweight='bold')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend(fontsize=6, loc='best')
-    ax2.tick_params(labelsize=7)
-    
+        # Assume rated current corresponds to 100% loading
+        # TODO: Replace with actual rated current for the line if available
+        I = L_t / 100 * 142  # Example: 100% loading = 142 A
+        T_ss = steady_state_temperature(I, T_ambient)
+        temperatures.append(T_ss)
+
+    # Plot temperature evolution and loading using subplots
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    axes[0].plot(scenarios, temperatures, marker='o', linestyle='-')
+    axes[0].set_xlabel("Scenario")
+    axes[0].set_ylabel("Conductor Temperature (°C)")
+    axes[0].set_title(f"Temperature Evolution\nLine '{line_name}' Phase {phase}")
+    axes[0].grid(True)
+
+    axes[1].plot(scenarios, loading_values, marker='s', linestyle='-', color='orange')
+    axes[1].set_xlabel("Scenario")
+    axes[1].set_ylabel("Line Loading (%)")
+    axes[1].set_title(f"Line Loading\nLine '{line_name}' Phase {phase}")
+    axes[1].grid(True)
+
     plt.tight_layout()
-    
-    # Save the plot
-    output_path = output_dir / f'temperature_evolution_{line_name}_phase{phase}.png'
+    output_path = output_dir / f'conductor_temperature_{line_name}_phase{phase}.png'
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    print(f"\n✓ Conductor temperature plot saved as '{output_path}'")
     plt.show()
 
 
@@ -435,4 +476,4 @@ if __name__ == "__main__":
     
     # Calculate and plot conductor temperature evolution
     # conductor_temperature_evolution('oh_b18948', 2, T_rated=75, T_ambient=30, tau=3, delta_t=1)
-    conductor_temperature_evolution('oh_b18930', 3, T_rated=75, T_ambient=30, tau=3, delta_t=1)
+    conductor_temperature_evolution('oh_b18948', 2, T_ambient=30)
