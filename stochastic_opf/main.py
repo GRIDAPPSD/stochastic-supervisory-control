@@ -432,7 +432,7 @@ def main(systemID):
     electric_load = yearly_df["Electricity:Facility [kW](Hourly)"]
     multipliers_yearly = (electric_load / electric_load.max()).tolist()  # 8760 normalized values [0, 1]
 
-    line_aging_data = {}
+    # Step 4: Loop through scenarios and solve OPF for each time step, applying load and DER multipliers
     for scenario_idx, row in load_multipliers_df.iterrows():
         print(f"\n{'='*80}")
         print(f"Scenario {scenario_idx}")

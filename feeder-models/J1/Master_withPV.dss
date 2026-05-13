@@ -36,4 +36,4 @@ Set MarkRegulators=Yes
 Set RegMarkerCode=47    ! Marker shape (OpenDSS marker code)
 Set RegMarkerSize=3     ! Marker size
 
-plot circuit
+!plot circuit
