@@ -283,7 +283,7 @@ def results_viz(network_data, results):
     print(f"\n✓ Circuit heatmap plot saved as '{output_path}'")
     plt.show()
 
-def line_loading_process(line_name, phase):
+def line_loading_analysis(line_name, phase):
     """Plot time series loading values for a specific line and phase.
     
     Args:
@@ -340,10 +340,10 @@ def line_loading_process(line_name, phase):
 
 def steady_state_temperature(
     I,                      # Current (A)
-    Ta_C,                   # Ambient temperature (°C)  <-- YES this matters
-    D0_m      = 0.02814,    # Conductor diameter (m)        [Drake ACSR default]
-    R_low     = 7.283e-5,   # Resistance at 25°C (Ω/m)     [Drake ACSR default]
-    R_high    = 8.688e-5,   # Resistance at 75°C (Ω/m)     [Drake ACSR default]
+    Ta_C,                   # Ambient temperature (°C)
+    D0_m      = 0.00462,    # Conductor diameter (m)        [Drake ACSR default]
+    R_low     = 8.153e-4,   # Resistance at 25°C (Ω/m)     [Drake ACSR default]
+    R_high    = 9.702e-4,   # Resistance at 75°C (Ω/m)     [Drake ACSR default]
     Vw_ms     = 0.61,       # Wind speed (m/s)
     phi_deg   = 90.0,       # Wind angle to conductor (°)
     qs        = 26.8,       # Solar heat gain (W/m)
@@ -388,7 +388,7 @@ def steady_state_temperature(
     return round((lo + hi) / 2, 2)
 
 
-def conductor_temperature_evolution(line_name, phase, T_ambient=30):
+def conductor_temperature_evolution(line_name, phase, T_ambient=25):
     """Calculate and plot conductor temperature and line loading evolution across scenarios.
 
     Reads per-scenario loading percentages from the line aging data JSON, computes
@@ -401,11 +401,15 @@ def conductor_temperature_evolution(line_name, phase, T_ambient=30):
         line_name (str): Name of the line to analyse (e.g. ``'oh_b18930'``).
         phase (int): Phase number (1, 2, or 3).
         T_ambient (float): Ambient temperature in °C used for the thermal model.
-            Defaults to 30.
+            Defaults to 25.
     """
     # Load line aging data
     output_dir = Path(__file__).resolve().parent / "output"
-    line_aging_path = output_dir / "line_aging_data.json"
+    line_aging_path = output_dir / "line_loading_data_scenario_0.json"
+
+    line_info_path = output_dir / "line_info.json"
+    with open(line_info_path, 'r') as f:
+        line_info = json.load(f)
     
     if not line_aging_path.exists():
         print(f"Error: Line aging data file not found at {line_aging_path}")
@@ -415,20 +419,20 @@ def conductor_temperature_evolution(line_name, phase, T_ambient=30):
         line_aging_data = json.load(f)
     
     # Extract loading percentages for the given line and phase
-    scenarios = []
+    timestamps = []
     loading_values = []
     
-    for scenario_num in sorted(line_aging_data.keys(), key=int):
-        scenario_data = line_aging_data[scenario_num]
+    for timestamp in sorted(line_aging_data.keys(), key=int):
+        loading_data = line_aging_data[timestamp]
         
         # Check if the line exists in this scenario
-        if line_name in scenario_data:
-            line_data = scenario_data[line_name]
+        if line_name in loading_data:
+            line_data = loading_data[line_name]
             
             # Check if the phase exists for this line
             if str(phase) in line_data:
-                loading_pct = line_data[str(phase)]['loading_percentage']
-                scenarios.append(int(scenario_num))
+                loading_pct = line_data[str(phase)]
+                timestamps.append(int(timestamp))
                 loading_values.append(loading_pct)
     
     # Check if data was found
@@ -441,22 +445,21 @@ def conductor_temperature_evolution(line_name, phase, T_ambient=30):
     temperatures = []
     for L_t in loading_values:
         # Assume rated current corresponds to 100% loading
-        # TODO: Replace with actual rated current for the line if available
-        I = L_t / 100 * 142  # Example: 100% loading = 142 A
+        I = L_t / 100 * line_info[line_name]['rating']
         T_ss = steady_state_temperature(I, T_ambient)
         temperatures.append(T_ss)
 
     # Plot temperature evolution and loading using subplots
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
-    axes[0].plot(scenarios, temperatures, marker='o', linestyle='-')
-    axes[0].set_xlabel("Scenario")
+    axes[0].plot(timestamps, temperatures, marker='o', linestyle='-')
+    axes[0].set_xlabel("Timestamp")
     axes[0].set_ylabel("Conductor Temperature (°C)")
     axes[0].set_title(f"Temperature Evolution\nLine '{line_name}' Phase {phase}")
     axes[0].grid(True)
 
-    axes[1].plot(scenarios, loading_values, marker='s', linestyle='-', color='orange')
-    axes[1].set_xlabel("Scenario")
+    axes[1].plot(timestamps, loading_values, marker='s', linestyle='-', color='orange')
+    axes[1].set_xlabel("Timestamp")
     axes[1].set_ylabel("Line Loading (%)")
     axes[1].set_title(f"Line Loading\nLine '{line_name}' Phase {phase}")
     axes[1].grid(True)
@@ -466,14 +469,90 @@ def conductor_temperature_evolution(line_name, phase, T_ambient=30):
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"\n✓ Conductor temperature plot saved as '{output_path}'")
     plt.show()
+    return temperatures, loading_values
+
+
+def arrhenius_life(T_profile, dt=1.0):
+    """
+    Calculate thermal aging of a conductor using Arrhenius Life-Temperature Relationship.
+    
+    Parameters
+    ----------
+    T_profile : array-like
+        Conductor temperature profile [°C]
+    dt : float
+        Time step between samples [hours] (default = 1.0)
+    
+    Returns
+    -------
+    results : dict
+        Contains life, damage, loss-of-life metrics
+    """
+    
+    # ---------- Arrhenius Constants ----------
+    T_rated_C = 90.0            # Rated temperature [°C]
+    L_rated   = 30 * 365 * 24   # Rated life at T_rated [hours] (30 years)
+    Ea        = 1.10            # Activation energy [eV]
+    kB        = 8.617e-5        # Boltzmann constant [eV/K]
+    
+    # ---------- Convert to Kelvin ----------
+    T_profile = np.asarray(T_profile, dtype=float)
+    T_K       = T_profile + 273.15
+    T_rated_K = T_rated_C + 273.15
+    
+    # ---------- Pre-exponential constant (calibrated to rated life) ----------
+    A = L_rated / np.exp(Ea / (kB * T_rated_K))
+    
+    # ---------- Instantaneous life at each temperature ----------
+    life_at_T = A * np.exp(Ea / (kB * T_K))                # [hours]
+    
+    # ---------- Cumulative thermal damage (Miner's rule) ----------
+    damage_increments  = dt / life_at_T
+    cumulative_damage  = np.cumsum(damage_increments)
+    total_damage       = cumulative_damage[-1]
+    
+    # ---------- Aging acceleration factor (IEEE C57.91 style) ----------
+    F_AA       = np.exp(Ea / kB * (1.0/T_rated_K - 1.0/T_K))
+    LoL_hours  = np.sum(F_AA * dt)                         # equivalent rated hours
+    
+    # ---------- Summary ----------
+    results = {
+        # "life_at_T_hours"       : life_at_T,
+        # "life_at_T_years"       : life_at_T / 8760.0,
+        "cumulative_damage"     : cumulative_damage,
+        "total_damage"          : total_damage,
+        "remaining_life_frac"   : max(0.0, 1.0 - total_damage),
+        "expected_life_years"   : (1.0 / total_damage) 
+                                   if total_damage > 0 else np.inf,
+        # "aging_factor_FAA"      : F_AA,
+        # "loss_of_life_hours"    : LoL_hours,
+        # "loss_of_life_days"     : LoL_hours / 24.0,
+    }
+
+    # plot cummulative damage increment and total damage
+    plt.figure(figsize=(3.5, 2.5))
+    plt.plot(results['cumulative_damage'], marker='o', linestyle='-')
+    plt.xlabel("Scenario")
+    plt.ylabel("Cumulative Damage")
+    plt.title("Cumulative Thermal Damage")
+    plt.grid(True)
+    output_dir = Path(__file__).resolve().parent / "output"
+    output_path = output_dir / f'cumulative_damage.png'
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    return results
 
 
 if __name__ == "__main__":
     # Post process line loading - specify line name and phase
-    # Example: line_loading_process('temp_sub', 1)
-    # Example: line_loading_process('oh_b18916', 2)
-    # line_loading_process('oh_b18948', 2)
+    # Example: line_loading_analysis('temp_sub', 1)
+    # Example: line_loading_analysis('oh_b18916', 2)
+    # line_loading_analysis('oh_b18948', 2)
     
-    # Calculate and plot conductor temperature evolution
-    # conductor_temperature_evolution('oh_b18948', 2, T_rated=75, T_ambient=30, tau=3, delta_t=1)
-    conductor_temperature_evolution('oh_b18948', 2, T_ambient=30)
+    # Calculate and plot conductor temperature evolution for a specific line and phase
+    temperatures, loading_values = conductor_temperature_evolution('oh_b18948', 2, T_ambient=25)
+    # Calculate relative aging rates from temperatures
+    aging_results = arrhenius_life(temperatures)
+    print(aging_results)
+

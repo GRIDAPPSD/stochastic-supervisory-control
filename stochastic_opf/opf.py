@@ -716,7 +716,7 @@ class OptimalPowerFlow:
 
         # m.obj = pyo.Objective(expr=penalty_weight * violation_penalty, sense=pyo.minimize)
         
-    def solve(self, scenario_idx,solver='mosek', verbose=True):
+    def solve(self, t, solver='mosek', verbose=True):
         """
         Solve the OPF problem.
         
@@ -734,9 +734,9 @@ class OptimalPowerFlow:
         opt.options['dparam.mio_tol_rel_gap'] = 0.005
 
         # Write optimization problem to a file in output directory
-        output_dir = Path(__file__).resolve().parent / "output"
+        output_dir = Path(__file__).resolve().parent / "output" /"opf_problem"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"optimization_problem_{scenario_idx}.txt"
+        output_path = output_dir / f"optimization_problem_{t}.txt"
         with open(output_path, "w") as f:
             f.write("Pyomo Model:\n")
             self.model.pprint(ostream=f)
@@ -851,7 +851,7 @@ class OptimalPowerFlow:
                 
                 if line_name not in line_loading:
                     line_loading[line_name] = {}
-                line_loading[line_name][phase] = {'loading_percentage': loading_percentage}
+                line_loading[line_name][phase] = float(f"{loading_percentage:.2f}")
             
             # extract DER power outputs (convert pu to kVAr)
             for der_bus, phase in self.model.DerBusPhaseSet:
@@ -863,7 +863,7 @@ class OptimalPowerFlow:
             
             # save results to a JSON file inside the output directory
             # Output directory is already created
-            output_file = output_dir / f"opf_results_{scenario_idx}.json"
+            output_file = output_dir / f"opf_results_{t}.json"
             with open(output_file, 'w') as f:
                 json.dump(results, f, indent=4)
             

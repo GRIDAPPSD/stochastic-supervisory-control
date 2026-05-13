@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import random
+import sys
 
 import networkx as nx
 import numpy as np
@@ -9,6 +10,25 @@ import pandas as pd
 
 from opf import OptimalPowerFlow
 from opf_postprocess import results_viz, compare_with_opendss
+
+
+class _Tee:
+    """Writes to both the original stdout and a log file simultaneously."""
+    def __init__(self, log_path):
+        self._stdout = sys.stdout
+        self._file = open(log_path, 'w', buffering=1, encoding='utf-8')
+
+    def write(self, data):
+        self._stdout.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self._stdout.flush()
+        self._file.flush()
+
+    def close(self):
+        sys.stdout = self._stdout
+        self._file.close()
 
 
 class PathHelper: 
@@ -112,6 +132,7 @@ class NetworkExtractor:
         
         # Extract lines with phase information
         lines_list = dss.Lines.AllNames()
+        # line_info = {}
         for line_name in lines_list:
             dss.Lines.Name(line_name)
             bus_names = dss.CktElement.BusNames()
@@ -137,7 +158,16 @@ class NetworkExtractor:
             x_matrix = np.array(dss.Lines.XMatrix()).reshape(dss.Lines.Phases(), dss.Lines.Phases())
             
             kv_base = network_data['buses'][bus1]['kv_base']
-            mva_rating = kv_base * dss.Lines.NormAmps() / 1000  
+            mva_rating = kv_base * dss.Lines.NormAmps() / 1000 
+            # line_info[line_name] = {
+            #     'bus1': bus1,
+            #     'bus2': bus2,
+            #     'phases_bus1': phases_bus1,
+            #     'phases_bus2': phases_bus2,
+            #     'length': dss.Lines.Length(),
+            #     'rating': dss.Lines.NormAmps(),
+            #     'enabled': dss.CktElement.Enabled()
+            # } 
             line_data = {
                 'name': line_name,
                 'bus1': bus1,
@@ -151,6 +181,13 @@ class NetworkExtractor:
                 'enabled': dss.CktElement.Enabled()
             }
             network_data['lines'].append(line_data)
+
+        # dump line info to a json file for later use in line aging model
+        # output_dir = Path(__file__).resolve().parent / "output"
+        # output_dir.mkdir(parents=True, exist_ok=True)
+        # output_path = output_dir / "line_info.json"
+        # with open(output_path, 'w') as f:
+        #     json.dump(line_info, f, indent=4)
 
         # Extract transformers
         transformer_list = dss.Transformers.AllNames()
@@ -303,18 +340,17 @@ class NetworkExtractor:
         return network_data, base_loads, base_ders
 
 
-def apply_load_multipliers(network_data, base_loads, multipliers):
+def apply_load_multipliers(network_data, base_loads, mult):
     """Rebuild network_data['loads'] from base loads with scenario multipliers applied.
     
     Args:
         network_data: Network data dict
         base_loads: List of base load dicts (name, bus, phases, kW, kvar)
-        multipliers: Dict mapping load name -> multiplier value
+        mult: Single float multiplier applied to all loads (e.g. from scenario file or weather-dependent)
     """
     network_data['loads'] = {}
     for load in base_loads:
-        # mult = multipliers.get(load['name'], 1.0)
-        mult = random.uniform(0.7, 0.9)
+        # mult = random.uniform(0.7, 0.9)
         # mult = 1.0
         kW = load['kW'] * mult
         kvar = load['kvar'] * mult
@@ -390,78 +426,93 @@ def main(systemID):
     load_multipliers_df = pd.read_csv(scenario_file)
     print(f"\nLoaded {len(load_multipliers_df)} scenarios from {scenario_file.name}")
 
+    # temporary scenario file for testing
+    scenario_file = paths.current_dir / "yearly_profile.csv"
+    yearly_df = pd.read_csv(scenario_file)
+    electric_load = yearly_df["Electricity:Facility [kW](Hourly)"]
+    multipliers_yearly = (electric_load / electric_load.max()).tolist()  # 8760 normalized values [0, 1]
+
     line_aging_data = {}
     for scenario_idx, row in load_multipliers_df.iterrows():
         print(f"\n{'='*80}")
         print(f"Scenario {scenario_idx}")
         print(f"{'='*80}")
 
-        # # Apply load multipliers for this scenario
-        multipliers = row.to_dict()        
-        apply_load_multipliers(network_data, base_loads, multipliers)
+        line_loading_yearly = {}
+        for t in range(len(multipliers_yearly)):
+            print(f"\n{'='*80}")
+            print(f"Timestamp {t} for Scenario {scenario_idx}")
+            print(f"{'='*80}")
 
-        # # Apply DER multiplier (single weather-dependent value for all DERs)
-        # der_multiplier = np.random.uniform(0, 1)
-        # apply_der_multipliers(network_data, base_ders, der_multiplier)
-        # print(f"DER multiplier: {der_multiplier:.4f}")
+            # Apply load multipliers for this time stamp
+            # multipliers = row.to_dict()   
+            print(f"\nApplying load multipliers for scenario {scenario_idx}, timestamp {t}... multiplier={multipliers_yearly[t]:.4f} ")
+            apply_load_multipliers(network_data, base_loads, multipliers_yearly[t])
 
-        print(f"\nFormulating OPF problem for scenario {scenario_idx}...")
-        opf = OptimalPowerFlow(network_data)
-        opf.formulate_opf()
+            # # Apply DER multiplier (single weather-dependent value for all DERs)
+            # der_multiplier = np.random.uniform(0, 1)
+            # apply_der_multipliers(network_data, base_ders, der_multiplier)
+            # print(f"DER multiplier: {der_multiplier:.4f}")
 
-        print(f"Solving OPF for scenario {scenario_idx}...")
-        results, line_loading = opf.solve(scenario_idx, verbose=False)
-        line_aging_data[scenario_idx] = line_loading
-        if scenario_idx >=50:
-            break
+            print(f"\nFormulating OPF problem for timestamp {t}...")
+            opf = OptimalPowerFlow(network_data)
+            opf.formulate_opf()
 
-        if results['status'] == 'ok':
+            print(f"Solving OPF for timestamp {t}...")
+            results, line_loading = opf.solve(t, verbose=False)
+            line_loading_yearly[t] = line_loading
+            if results['status'] == 'ok':
 
-            print("\nSubstation power injection:")
-            for phase, power in results['substation_power'].items():
-                print(f"  Phase {phase}: P={power['P']:.4f} kW, Q={power['Q']:.4f} kVAr")
+                print("\nSubstation power injection:")
+                for phase, power in results['substation_power'].items():
+                    print(f"  Phase {phase}: P={power['P']:.4f} kW, Q={power['Q']:.4f} kVAr")
 
-            # print("\nCapacitor Status (Optimal Control Decisions):")
-            # if results['capacitor_status']:
-            #     for cap_name, cap_data in results['capacitor_status'].items():
-            #         status = cap_data['status']
-            #         status_str = "ON" if status == 1 else "OFF"
-            #         print(f"  {cap_name}: {status_str} (status={status})")
-            # else:
-            #     print("  No capacitors in the system")
+                # print("\nCapacitor Status (Optimal Control Decisions):")
+                # if results['capacitor_status']:
+                #     for cap_name, cap_data in results['capacitor_status'].items():
+                #         status = cap_data['status']
+                #         status_str = "ON" if status == 1 else "OFF"
+                #         print(f"  {cap_name}: {status_str} (status={status})")
+                # else:
+                #     print("  No capacitors in the system")
 
-            # if results['regulator_tap']:
-            #     print("\nRegulator Tap Positions (Optimal Control Decisions):")
-            #     for reg_name, tap_positions in results['regulator_tap'].items():
-            #         tap_indices = [i for i, val in enumerate(tap_positions) if val == 1]
-            #         print(f"  {reg_name} is at tap position: {tap_indices[0]}")
-            # else:
-            #     print("  No Regulators in the system")
+                # if results['regulator_tap']:
+                #     print("\nRegulator Tap Positions (Optimal Control Decisions):")
+                #     for reg_name, tap_positions in results['regulator_tap'].items():
+                #         tap_indices = [i for i, val in enumerate(tap_positions) if val == 1]
+                #         print(f"  {reg_name} is at tap position: {tap_indices[0]}")
+                # else:
+                #     print("  No Regulators in the system")
 
-            if results['der_q']:
-                print("\nDER Reactive Power Outputs (Optimal Control Decisions):")
-                for der_bus, der_data in results['der_q'].items():
-                    for phase, q in der_data.items():
-                        voltage = results['voltages'][der_bus][phase]
-                        print(f"  {der_bus} Phase {phase}: Q={q['Q']:.4f} kVAR, V={voltage:.4f} p.u.")
-            # postprocessing.compare_with_opendss(network_data, results)
-            # results_viz(network_data, results)
-
-        #     return        
-        # else:
-        #     print(f"  OPF failed for scenario {scenario_idx}: {results.get('message', 'Unknown error')}")
-
-    return line_aging_data
+                if results['der_q']:
+                    print("\nDER Reactive Power Outputs (Optimal Control Decisions):")
+                    for der_bus, der_data in results['der_q'].items():
+                        for phase, q in der_data.items():
+                            voltage = results['voltages'][der_bus][phase]
+                            print(f"  {der_bus} Phase {phase}: Q={q['Q']:.4f} kVAR, V={voltage:.4f} p.u.")
+                # postprocessing.compare_with_opendss(network_data, results)
+                # results_viz(network_data, results) 
+                if t >=10:   
+                    break 
+            else:
+                print(f"  OPF failed for scenario {scenario_idx}: {results.get('message', 'Unknown error')}")
+        # dump every scenario's line loading data to a json file for later use in line aging model
+        output_path = output_dir / f"line_loading_data_scenario_{scenario_idx}.json"
+        with open(output_path, 'w') as f:
+            json.dump(line_loading_yearly, f, indent=4)
+        break  # temporary break after first scenario for testing
 
 
 if __name__ == "__main__":
     systemID = "J1"
     # systemID = "123Bus"
 
-    line_aging_data = main(systemID)
-    # dump this to a json file in output directory for later use in line aging model
     output_dir = Path(__file__).resolve().parent / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "line_aging_data.json"
-    with open(output_path, 'w') as f:
-        json.dump(line_aging_data, f, indent=4)
+
+    tee = _Tee(output_dir / "log.txt")
+    sys.stdout = tee
+    try:
+        main(systemID)
+    finally:
+        tee.close()
