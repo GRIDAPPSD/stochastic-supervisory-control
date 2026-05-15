@@ -422,18 +422,24 @@ def conductor_temperature_evolution(line_name, phase, T_ambient=25):
     timestamps = []
     loading_values = []
     
-    for timestamp in sorted(line_aging_data.keys(), key=int):
-        loading_data = line_aging_data[timestamp]
+    # Account for timestamps where the data may be missing.
+    # We want to use the data from previous timestamps if data is missing for the current timestamp.
+    sorted_keys = sorted(line_aging_data.keys(), key=int)
+    all_timestamps = range(int(sorted_keys[0]), int(sorted_keys[-1]) + 1)
+    last_loading_pct = None
+    for timestamp in all_timestamps:
         
-        # Check if the line exists in this scenario
-        if line_name in loading_data:
-            line_data = loading_data[line_name]
-            
-            # Check if the phase exists for this line
-            if str(phase) in line_data:
-                loading_pct = line_data[str(phase)]
-                timestamps.append(int(timestamp))
-                loading_values.append(loading_pct)
+        # Use existing data if the timestamp is present, otherwise carry forward last known value
+        if str(timestamp) in line_aging_data:
+            loading_data = line_aging_data[str(timestamp)]
+            if line_name in loading_data:
+                line_data = loading_data[line_name]
+                if str(phase) in line_data:
+                    last_loading_pct = line_data[str(phase)]
+        
+        if last_loading_pct is not None:
+            timestamps.append(timestamp)
+            loading_values.append(last_loading_pct)
     
     # Check if data was found
     if not loading_values:
@@ -553,6 +559,6 @@ if __name__ == "__main__":
     # Calculate and plot conductor temperature evolution for a specific line and phase
     temperatures, loading_values = conductor_temperature_evolution('oh_b18948', 2, T_ambient=25)
     # Calculate relative aging rates from temperatures
-    aging_results = arrhenius_life(temperatures)
-    print(aging_results)
+    # aging_results = arrhenius_life(temperatures)
+    # print(aging_results)
 

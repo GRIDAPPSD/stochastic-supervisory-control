@@ -351,7 +351,6 @@ def apply_load_multipliers(network_data, base_loads, mult):
     network_data['loads'] = {}
     for load in base_loads:
         # mult = random.uniform(0.7, 0.9)
-        # mult = 1.0
         kW = load['kW'] * mult
         kvar = load['kvar'] * mult
         bus = load['bus']
@@ -430,7 +429,7 @@ def main(systemID):
     scenario_file = paths.current_dir / "yearly_profile.csv"
     yearly_df = pd.read_csv(scenario_file)
     electric_load = yearly_df["Electricity:Facility [kW](Hourly)"]
-    multipliers_yearly = (electric_load / electric_load.max()).tolist()  # 8760 normalized values [0, 1]
+    multipliers_yearly = (electric_load / electric_load.max() * 0.8).tolist()  # 8760 normalized values [0, 0.8]
 
     # Step 4: Loop through scenarios and solve OPF for each time step, applying load and DER multipliers
     for scenario_idx, row in load_multipliers_df.iterrows():
@@ -439,7 +438,7 @@ def main(systemID):
         print(f"{'='*80}")
 
         line_loading_yearly = {}
-        for t in range(len(multipliers_yearly)):
+        for t in range(369, len(multipliers_yearly)):
             print(f"\n{'='*80}")
             print(f"Timestamp {t} for Scenario {scenario_idx}")
             print(f"{'='*80}")
@@ -492,8 +491,9 @@ def main(systemID):
                             print(f"  {der_bus} Phase {phase}: Q={q['Q']:.4f} kVAR, V={voltage:.4f} p.u.")
                 # postprocessing.compare_with_opendss(network_data, results)
                 # results_viz(network_data, results) 
-                if t >=10:   
-                    break 
+                # break
+                # if t >=10:   
+                #     break 
             else:
                 print(f"  OPF failed for scenario {scenario_idx}: {results.get('message', 'Unknown error')}")
         # dump every scenario's line loading data to a json file for later use in line aging model

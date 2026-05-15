@@ -732,14 +732,15 @@ class OptimalPowerFlow:
 
         # opt.options['mio_tol_rel_gap'] = 0.01
         opt.options['dparam.mio_tol_rel_gap'] = 0.005
+        opt.options['dparam.mio_max_time'] = 60
 
         # Write optimization problem to a file in output directory
         output_dir = Path(__file__).resolve().parent / "output" /"opf_problem"
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"optimization_problem_{t}.txt"
-        with open(output_path, "w") as f:
-            f.write("Pyomo Model:\n")
-            self.model.pprint(ostream=f)
+        # output_path = output_dir / f"optimization_problem_{t}.txt"
+        # with open(output_path, "w") as f:
+            # f.write("Pyomo Model:\n")
+            # self.model.pprint(ostream=f)
         
         # Solve the problem
         if verbose:
@@ -863,9 +864,9 @@ class OptimalPowerFlow:
             
             # save results to a JSON file inside the output directory
             # Output directory is already created
-            output_file = output_dir / f"opf_results_{t}.json"
-            with open(output_file, 'w') as f:
-                json.dump(results, f, indent=4)
+            # output_file = output_dir / f"opf_results_{t}.json"
+            # with open(output_file, 'w') as f:
+                # json.dump(results, f, indent=4)
             
             # Print summary of violations
             # if total_violations > 1e-6:
