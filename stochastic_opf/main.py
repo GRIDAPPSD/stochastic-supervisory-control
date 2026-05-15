@@ -438,7 +438,7 @@ def main(systemID):
         print(f"{'='*80}")
 
         line_loading_yearly = {}
-        for t in range(369, len(multipliers_yearly)):
+        for t in range(len(multipliers_yearly)):
             print(f"\n{'='*80}")
             print(f"Timestamp {t} for Scenario {scenario_idx}")
             print(f"{'='*80}")

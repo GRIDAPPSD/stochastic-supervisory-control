@@ -30,7 +30,7 @@ class OptimalPowerFlow:
         for line in self.lines:
             rating_pu = line['rating'] / self.power_base
             self.line_ampacity[line['name']] = rating_pu
-        
+
         # Pyomo model
         self.model = None
         
@@ -654,12 +654,12 @@ class OptimalPowerFlow:
         m.LineLimitConstraint1 = pyo.Constraint(m.LinePhaseSet, rule=line_limit_rule_1)
         m.LineLimitConstraint2 = pyo.Constraint(m.LinePhaseSet, rule=line_limit_rule_2)
     
-    def formulate_opf(self, penalty_weight=1000, vsrc=1.0):
+    def formulate_opf(self, penalty_weight=100, vsrc=1.0):
         """
         Formulate the complete OPF problem.
         
         Args:
-            penalty_weight: Weight for line violation penalty in objective function (default: 1)
+            penalty_weight: Weight for line violation penalty in objective function (default: 10)
         """
         # Create Pyomo model
         self.model = pyo.ConcreteModel()
@@ -739,8 +739,8 @@ class OptimalPowerFlow:
         output_dir.mkdir(parents=True, exist_ok=True)
         # output_path = output_dir / f"optimization_problem_{t}.txt"
         # with open(output_path, "w") as f:
-            # f.write("Pyomo Model:\n")
-            # self.model.pprint(ostream=f)
+        #     f.write("Pyomo Model:\n")
+        #     self.model.pprint(ostream=f)
         
         # Solve the problem
         if verbose:
@@ -820,11 +820,12 @@ class OptimalPowerFlow:
             for line_name, phase in self.model.LinePhaseSet:
                 seg_values = []
                 line_total = 0
-                flow_P = pyo.value(self.model.P_line[line_name, phase]) * 1000 * self.power_base
-                flow_Q = pyo.value(self.model.Q_line[line_name, phase]) * 1000 * self.power_base
+                P_pu = pyo.value(self.model.P_line[line_name, phase])
+                Q_pu = pyo.value(self.model.Q_line[line_name, phase])
                 K = math.sqrt(2) - 1
-                flow_S = max((abs(flow_P) + K* abs(flow_Q) ) / 1000.0, (abs(flow_Q) + K* abs(flow_P)) / 1000.0)
-                loading_percentage = flow_S / self.line_ampacity[line_name] * 100
+                # Compute loading in pu — consistent with the optimization constraint form
+                flow_S_pu = max(abs(P_pu) + K * abs(Q_pu), abs(Q_pu) + K * abs(P_pu))
+                loading_percentage = flow_S_pu / self.line_ampacity[line_name] * 100
                 for seg in self.model.ViolSegSet:
                     val = pyo.value(self.model.line_viol_seg[line_name, phase, seg])
                     seg_values.append(val)
@@ -866,7 +867,7 @@ class OptimalPowerFlow:
             # Output directory is already created
             # output_file = output_dir / f"opf_results_{t}.json"
             # with open(output_file, 'w') as f:
-                # json.dump(results, f, indent=4)
+            #     json.dump(results, f, indent=4)
             
             # Print summary of violations
             # if total_violations > 1e-6:

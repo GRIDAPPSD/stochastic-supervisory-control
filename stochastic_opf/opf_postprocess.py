@@ -424,23 +424,16 @@ def conductor_temperature_evolution(line_name, phase, T_ambient=25):
     
     # Account for timestamps where the data may be missing.
     # We want to use the data from previous timestamps if data is missing for the current timestamp.
-    sorted_keys = sorted(line_aging_data.keys(), key=int)
-    all_timestamps = range(int(sorted_keys[0]), int(sorted_keys[-1]) + 1)
-    last_loading_pct = None
-    for timestamp in all_timestamps:
-        
+    for timestamp in range(len(line_aging_data)):
         # Use existing data if the timestamp is present, otherwise carry forward last known value
         if str(timestamp) in line_aging_data:
             loading_data = line_aging_data[str(timestamp)]
             if line_name in loading_data:
                 line_data = loading_data[line_name]
                 if str(phase) in line_data:
-                    last_loading_pct = line_data[str(phase)]
-        
-        if last_loading_pct is not None:
-            timestamps.append(timestamp)
-            loading_values.append(last_loading_pct)
-    
+                    timestamps.append(timestamp)
+                    loading_values.append(line_data[str(phase)])
+            
     # Check if data was found
     if not loading_values:
         print(f"Error: No data found for line '{line_name}' phase {phase}")
